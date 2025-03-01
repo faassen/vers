@@ -111,7 +111,8 @@ impl SparseRSVec {
         if i >= self.len {
             None
         } else {
-            Some(self.vec.predecessor_unchecked(i) == i)
+            // if the predecessor is None, the bit is left of the first 1-bit
+            Some(self.vec.predecessor(i).map(|p| p == i).unwrap_or(false))
         }
     }
 
@@ -159,6 +160,16 @@ impl SparseRSVec {
             i - self.vec.rank(i)
         }
     }
+
+    /// Returns the length of the bit vector if it was uncompressed.
+    pub fn len(&self) -> u64 {
+        self.len
+    }
+
+    /// Returns true if the vector is empty.
+    pub fn is_empty(&self) -> bool {
+        self.len == 0
+    }
 }
 
 impl From<BitVec> for SparseRSVec {
@@ -170,5 +181,147 @@ impl From<BitVec> for SparseRSVec {
 impl<'a> From<&'a BitVec> for SparseRSVec {
     fn from(input: &'a BitVec) -> Self {
         Self::from_bitvec_inverted(input)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::SparseRSVec;
+    use crate::BitVec;
+    use rand::prelude::StdRng;
+    use rand::{Rng, SeedableRng};
+
+    #[test]
+    fn test_sparse_rank() {
+        let sparse = SparseRSVec::new(&[1, 3, 5, 7, 9], 12);
+        assert_eq!(sparse.rank1(0), 0);
+        assert_eq!(sparse.rank1(1), 0);
+        assert_eq!(sparse.rank1(2), 1);
+        assert_eq!(sparse.rank1(3), 1);
+        assert_eq!(sparse.rank1(4), 2);
+        assert_eq!(sparse.rank1(5), 2);
+        assert_eq!(sparse.rank1(6), 3);
+        assert_eq!(sparse.rank1(7), 3);
+        assert_eq!(sparse.rank1(8), 4);
+        assert_eq!(sparse.rank1(9), 4);
+        assert_eq!(sparse.rank1(10), 5);
+        assert_eq!(sparse.rank1(11), 5);
+        assert_eq!(sparse.rank1(12), 5);
+        assert_eq!(sparse.rank1(999), 5);
+    }
+
+    #[test]
+    fn test_sparse_select() {
+        let sparse = SparseRSVec::new(&[1, 3, 5, 7, 9], 12);
+        assert_eq!(sparse.select1(0), 1);
+        assert_eq!(sparse.select1(1), 3);
+        assert_eq!(sparse.select1(2), 5);
+        assert_eq!(sparse.select1(3), 7);
+        assert_eq!(sparse.select1(4), 9);
+        assert_eq!(sparse.select1(5), 12);
+        assert_eq!(sparse.select1(6), 12);
+    }
+
+    #[test]
+    fn test_sparse_rank0() {
+        let sparse = SparseRSVec::new(&[1, 3, 5, 7, 9], 12);
+        assert_eq!(sparse.rank0(0), 0);
+        assert_eq!(sparse.rank0(1), 1);
+        assert_eq!(sparse.rank0(2), 1);
+        assert_eq!(sparse.rank0(3), 2);
+        assert_eq!(sparse.rank0(4), 2);
+        assert_eq!(sparse.rank0(5), 3);
+        assert_eq!(sparse.rank0(6), 3);
+        assert_eq!(sparse.rank0(7), 4);
+        assert_eq!(sparse.rank0(8), 4);
+        assert_eq!(sparse.rank0(9), 5);
+        assert_eq!(sparse.rank0(10), 5);
+        assert_eq!(sparse.rank0(11), 6);
+        assert_eq!(sparse.rank0(12), 7);
+        assert_eq!(sparse.rank0(999), 7);
+    }
+
+    #[test]
+    fn test_empty_sparse() {
+        let sparse = SparseRSVec::new(&[], 0);
+        assert_eq!(sparse.rank1(0), 0);
+        assert_eq!(sparse.rank1(1), 0);
+        assert_eq!(sparse.rank1(999), 0);
+        assert_eq!(sparse.select1(0), 0);
+        assert_eq!(sparse.select1(1), 0);
+        assert_eq!(sparse.select1(999), 0);
+        assert_eq!(sparse.rank0(0), 0);
+        assert_eq!(sparse.rank0(1), 0);
+        assert_eq!(sparse.rank0(999), 0);
+        assert!(sparse.is_empty());
+        assert_eq!(sparse.len(), 0);
+    }
+
+    #[test]
+    fn test_sparse_get() {
+        let sparse = SparseRSVec::new(&[1, 3, 5, 7, 9], 12);
+        assert_eq!(sparse.get(0), Some(0));
+        assert_eq!(sparse.get(1), Some(1));
+        assert_eq!(sparse.get(2), Some(0));
+        assert_eq!(sparse.get(3), Some(1));
+        assert_eq!(sparse.get(4), Some(0));
+        assert_eq!(sparse.get(5), Some(1));
+        assert_eq!(sparse.get(6), Some(0));
+        assert_eq!(sparse.get(7), Some(1));
+        assert_eq!(sparse.get(8), Some(0));
+        assert_eq!(sparse.get(9), Some(1));
+        assert_eq!(sparse.get(10), Some(0));
+        assert_eq!(sparse.get(11), Some(0));
+        assert_eq!(sparse.get(12), None);
+        assert_eq!(sparse.get(999), None);
+    }
+
+    #[test]
+    fn test_from_bitvector() {
+        let mut bv = BitVec::from_ones(12);
+        bv.flip_bit(6);
+        bv.flip_bit(7);
+
+        let sparse = SparseRSVec::from_bitvec(&bv);
+        assert_eq!(sparse.rank1(0), 0);
+        assert_eq!(sparse.rank1(1), 1);
+        assert_eq!(sparse.rank1(2), 2);
+        assert_eq!(sparse.rank1(7), 6);
+        assert_eq!(sparse.rank1(8), 6);
+        assert_eq!(sparse.rank1(9), 7);
+        assert_eq!(sparse.rank1(12), 10);
+
+        let sparse = SparseRSVec::from_bitvec_inverted(&bv);
+        assert_eq!(sparse.rank1(0), 0);
+        assert_eq!(sparse.rank1(1), 0);
+        assert_eq!(sparse.rank1(2), 0);
+        assert_eq!(sparse.rank1(7), 1);
+        assert_eq!(sparse.rank1(8), 2);
+        assert_eq!(sparse.rank1(9), 2);
+        assert_eq!(sparse.rank1(12), 2);
+    }
+
+    #[test]
+    fn test_fuzzy() {
+        const L: usize = 100_000;
+        let mut bv = BitVec::from_zeros(L);
+        let mut rng = StdRng::from_seed([0; 32]);
+
+        for _ in 0..L / 4 {
+            bv.flip_bit(rng.gen_range(0..L));
+        }
+
+        let sparse = SparseRSVec::from_bitvec(&bv);
+
+        let mut ones = 0;
+        for i in 0..L {
+            assert_eq!(bv.get(i), sparse.get(i as u64));
+            assert_eq!(ones, sparse.rank1(i as u64));
+            assert_eq!(i as u64 - ones, sparse.rank0(i as u64));
+            if bv.get(i) == Some(1) {
+                assert_eq!(i, sparse.select1(ones as usize).try_into().unwrap());
+                ones += 1;
+            }
+        }
     }
 }
