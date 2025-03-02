@@ -1,16 +1,44 @@
-//! A sparse bit vector with `rank1` and `select1` support.
-//! The vector requires `O(n log u/n) + o(n)` bits of space, where `n` is the number of bits in the vector
+//! A sparse bit vector with `rank1`, `rank0` and `select1` support.
+//! The vector requires `O(n log u/n) + 2n + o(n)` bits of space, where `n` is the number of bits in the vector
 //! and `u` is the number of 1-bits.
+//! The vector is constructed from a sorted list of indices of 1-bits, or from an existing
+//! [`BitVec`](crate::BitVec).
 
 use crate::{BitVec, EliasFanoVec};
 
 /// A succinct representation of a sparse vector with rank and select support.
-/// The vector is a compressed sequence of indices of 1-bits.
+/// It is a thin wrapper around an [`EliasFanoVec`] that compresses the indices of 1-bits.
 ///
-/// It is a thin wrapper around an [`EliasFanoVec`] that compresses the indices.
 /// Therefore, no `select0` function is provided.
 /// However, the constructor [`from_bitvec_inverted`] can be used to cheaply invert the input `BitVec`,
 /// reversing the roles of 1-bits and 0-bits.
+///
+/// # Examples
+/// ```
+/// use vers_vecs::SparseRSVec;
+///
+/// let sparse = SparseRSVec::new(&[1, 3, 5, 7, 9], 12);
+/// assert_eq!(sparse.get(5), Some(1));
+/// assert_eq!(sparse.get(11), Some(0));
+/// assert_eq!(sparse.get(12), None);
+///
+/// assert_eq!(sparse.rank1(5), 2);
+/// assert_eq!(sparse.select1(2), 5);
+/// ```
+///
+/// It cn also be constructed from a `BitVec` directly:
+/// ```
+/// use vers_vecs::SparseRSVec;
+/// use vers_vecs::BitVec;
+///
+/// let mut bv = BitVec::from_zeros(12);
+/// bv.flip_bit(6);
+/// bv.flip_bit(7);
+///
+/// let sparse = SparseRSVec::from_bitvec(&bv);
+/// assert_eq!(sparse.rank1(5), 0);
+/// assert_eq!(sparse.select1(0), 6);
+/// ```
 ///
 /// [`EliasFanoVec`]: struct.EliasFanoVec.html
 /// [`from_bitvec_inverted`]: #method.from_bitvec_inverted
@@ -30,7 +58,7 @@ impl SparseRSVec {
     ///
     /// # Parameters
     /// - `input`: The positions of set bits, or unset bits if the sparse vector should compress
-    /// zeros.
+    ///   zeros.
     /// - `len`: The length of the vector, which is needed if the last bit is not in the input slice.
     pub fn new(input: &[u64], len: u64) -> Self {
         debug_assert!(input.is_sorted(), "input must be sorted");
@@ -76,6 +104,21 @@ impl SparseRSVec {
     ///
     /// # Parameters
     /// - `input`: The input `BitVec` to compress.
+    ///
+    /// # Example
+    /// ```
+    /// use vers_vecs::SparseRSVec;
+    /// use vers_vecs::BitVec;
+    ///
+    /// let mut bv = BitVec::from_ones(12);
+    /// // set 6 and 7 to 0
+    /// bv.flip_bit(6);
+    /// bv.flip_bit(7);
+    ///
+    /// let sparse = SparseRSVec::from_bitvec_inverted(&bv);
+    /// // now select1 gives the position of 0-bits
+    /// assert_eq!(sparse.select1(1), 7);
+    /// ```
     ///
     /// [`rank1`]: #method.rank1
     /// [`select1`]: #method.select1
@@ -148,17 +191,21 @@ impl SparseRSVec {
         self.vec.rank(i)
     }
 
-    /// Returns the number of non-sparse bits in the vector up to position `i`.
-    /// The non-sparse bits are the ones this vector is not built from, meaning they can be either 1 or 0,
-    /// depending on the input to the constructor.
+    /// Returns the number of 0-bits in the vector up to position `i`.
     ///
-    /// If `i` is out of bounds, the number of non-sparse bits in the vector is returned.
+    /// If `i` is out of bounds, the number of 0-bits in the vector is returned.
     pub fn rank0(&self, i: u64) -> u64 {
         if i >= self.len {
             self.len - self.vec.rank(self.len)
         } else {
             i - self.vec.rank(i)
         }
+    }
+
+    /// Returns an iterator over the 1-bits in the vector.
+    /// The iterator yields the positions of the 1-bits in ascending order.
+    pub fn iter1(&self) -> impl Iterator<Item = u64> + '_ {
+        self.vec.iter()
     }
 
     /// Returns the length of the bit vector if it was uncompressed.
@@ -169,6 +216,12 @@ impl SparseRSVec {
     /// Returns true if the vector is empty.
     pub fn is_empty(&self) -> bool {
         self.len == 0
+    }
+
+    /// Returns the number of bytes used by the vector on the heap.
+    ///  Does not include allocated memory that isn't used.
+    pub fn heap_size(&self) -> usize {
+        self.vec.heap_size()
     }
 }
 
@@ -299,6 +352,20 @@ mod tests {
         assert_eq!(sparse.rank1(8), 2);
         assert_eq!(sparse.rank1(9), 2);
         assert_eq!(sparse.rank1(12), 2);
+    }
+
+    #[test]
+    fn test_large_block() {
+        // test that the implementation works correctly if the search triggers a binary search
+        let sparse = SparseRSVec::new(
+            &[
+                1, 100_000, 100_001, 100_002, 100_003, 100_004, 100_005, 100_006, 100_007, 100_008,
+                100_009, 100_010, 1_000_000,
+            ],
+            2_000_000,
+        );
+        assert_eq!(sparse.rank1(100_008), 9);
+        assert_eq!(sparse.rank1(100_012), 12);
     }
 
     #[test]

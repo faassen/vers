@@ -446,6 +446,73 @@ fn test_oob_rank() {
 }
 
 #[test]
+fn test_rank_binary_search() {
+    const MAX_LEN: usize = 60;
+    // test various configurations of the elias fano vec that require binary search
+    let mut slice = Vec::with_capacity(MAX_LEN + 20);
+    for length in 10..MAX_LEN {
+        slice.clear();
+        slice.push(0);
+        slice.push(1);
+        for _ in 0..length {
+            slice.push(10);
+        }
+        slice.push(20);
+        slice.push(30);
+
+        let ef = EliasFanoVec::from_slice(&slice);
+
+        assert_eq!(ef.rank(0), 0);
+        assert_eq!(ef.rank(1), 1);
+        assert_eq!(ef.rank(10), 2);
+        assert_eq!(ef.rank(11), length as u64 + 2);
+    }
+
+    // test various configurations where the binary search returns elements in the middle
+    for length in 10..MAX_LEN {
+        slice.clear();
+        slice.push(0);
+        slice.push(1);
+        for _ in 0..16 {
+            slice.push(10);
+        }
+        for _ in 0..length {
+            slice.push(11);
+        }
+        slice.push(20);
+        slice.push(30);
+
+        let ef = EliasFanoVec::from_slice(&slice);
+
+        assert_eq!(ef.rank(0), 0);
+        assert_eq!(ef.rank(1), 1);
+        assert_eq!(ef.rank(10), 2);
+        assert_eq!(ef.rank(11), 18);
+        assert_eq!(ef.rank(12), 18 + length as u64);
+    }
+}
+
+#[test]
+fn test_delta() {
+    let ef = EliasFanoVec::from_slice(&vec![0, 1, 4, 7]);
+
+    assert_eq!(ef.delta(0), Some(0));
+    assert_eq!(ef.delta(1), Some(1));
+    assert_eq!(ef.delta(2), Some(3));
+    assert_eq!(ef.delta(3), Some(3));
+    assert_eq!(ef.delta(4), None);
+    assert_eq!(ef.delta(5), None);
+}
+
+#[test]
+fn test_delta_non_zero() {
+    // test whether an EF vector that doesnt start at 0 is handled correctly
+    let ef = EliasFanoVec::from_slice(&vec![100, 101, 102, 103]);
+    assert_eq!(ef.delta(0), Some(100));
+    assert_eq!(ef.delta(1), Some(1));
+}
+
+#[test]
 fn test_empty_ef_vec() {
     let ef = EliasFanoVec::from_slice(&[]);
     assert_eq!(ef.len(), 0);
@@ -455,4 +522,5 @@ fn test_empty_ef_vec() {
     assert_eq!(ef.predecessor(u64::MAX), None);
     assert_eq!(ef.get(0), None);
     assert_eq!(ef.rank(3), 0);
+    assert_eq!(ef.delta(0), None);
 }
